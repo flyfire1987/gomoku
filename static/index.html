@@ -1,0 +1,1488 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>♟️ 五子棋</title>
+    <link rel="icon" type="image/png" href="/static/favicon.ico" />
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg-1: #f5e6c8;
+            --bg-2: #d4a574;
+            --line: #5d4037;
+            --black: #1a1a1a;
+            --white: #fafafa;
+            --red: #e53935;
+            --primary: #1976d2;
+            --primary-hover: #1565c0;
+            --warn: #ff9800;
+            --success: #43a047;
+            --text: #2c2c2c;
+            --text-mute: #888;
+        }
+        html, body { width: 100%; min-height: 100vh; overflow-x: hidden; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #f5e6c8 0%, #d4a574 100%);
+            color: var(--text);
+            -webkit-text-size-adjust: 100%;
+        }
+        .header {
+            background: white;
+            padding: 18px 20px 14px;
+            border-radius: 0 0 16px 16px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            text-align: center;
+        }
+        .header h1 { font-size: 20px; color: #333; font-weight: 600; }
+        .header .sub { font-size: 12px; color: var(--text-mute); margin-top: 4px; }
+        .container {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 16px 14px 30px;
+        }
+
+        /* 选档 + 状态 */
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            background: white;
+            padding: 12px;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            margin-bottom: 14px;
+            align-items: center;
+        }
+        .controls .label { font-size: 13px; color: var(--text-mute); margin-right: 4px; }
+        .level-btn {
+            border: 1.5px solid #ddd;
+            background: white;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.15s;
+            -webkit-tap-highlight-color: transparent;
+            min-height: 36px;
+        }
+        .level-btn.active {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+        .level-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .level-btn:not(:disabled):hover { transform: translateY(-1px); }
+        .status {
+            flex: 1;
+            text-align: right;
+            font-size: 13px;
+            color: var(--text-mute);
+            min-height: 18px;
+        }
+        .status .thinking { color: var(--warn); }
+        .status .win { color: var(--success); font-weight: 600; }
+        .status .lose { color: var(--red); font-weight: 600; }
+        .status .draw { color: var(--text-mute); font-weight: 600; }
+
+        /* 棋盘容器 */
+        .board-wrap {
+            background: white;
+            padding: 14px;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            margin-bottom: 14px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .board {
+            position: relative;
+            background: var(--bg-1);
+            border-radius: 6px;
+            /* 用 CSS 变量控制棋盘尺寸 */
+            --cell-size: 30px;
+            width: calc(var(--cell-size) * 14 + 2 * 16px);
+            height: calc(var(--cell-size) * 14 + 2 * 16px);
+            padding: 16px;
+            background-image:
+                linear-gradient(to right, var(--line) 1px, transparent 1px),
+                linear-gradient(to bottom, var(--line) 1px, transparent 1px);
+            background-size: var(--cell-size) var(--cell-size);
+            background-position: 16px 16px;
+            touch-action: manipulation;
+        }
+        @media (max-width: 520px) {
+            .board { --cell-size: 24px; }
+        }
+        @media (max-width: 420px) {
+            .board { --cell-size: 20px; }
+        }
+        @media (max-width: 360px) {
+            .board { --cell-size: 17px; }
+        }
+        /* 棋盘 4 个角的小标识点 */
+        .board::before {
+            content: '';
+            position: absolute;
+            left: 16px; top: 16px;
+            width: calc(var(--cell-size) * 14); height: calc(var(--cell-size) * 14);
+            pointer-events: none;
+        }
+        /* 棋子层 */
+        .piece {
+            position: absolute;
+            width: calc(var(--cell-size) - 2px);
+            height: calc(var(--cell-size) - 2px);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            box-shadow: 0 1.5px 3px rgba(0,0,0,0.25);
+            transition: left 0.18s ease, top 0.18s ease;
+        }
+        .piece.black {
+            background: radial-gradient(circle at 35% 35%, #666 0%, var(--black) 70%);
+        }
+        .piece.white {
+            background: radial-gradient(circle at 35% 35%, #fff 0%, #d0d0d0 90%);
+        }
+        .piece.last::after {
+            content: '';
+            position: absolute;
+            left: 50%; top: 50%;
+            width: 30%; height: 30%;
+            border-radius: 50%;
+            background: var(--red);
+            transform: translate(-50%, -50%);
+        }
+        .piece.win {
+            animation: pulse 1.2s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: translate(-50%, -50%) scale(1); }
+            50% { transform: translate(-50%, -50%) scale(1.15); }
+        }
+        /* 落子点提示（鼠标悬停） */
+        .hover-dot {
+            position: absolute;
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: rgba(0,0,0,0.25);
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            display: none;
+        }
+        .board.interactive .hover-dot { display: block; }
+
+        /* 操作按钮区 */
+        .actions {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+        .btn {
+            flex: 1;
+            border: 0;
+            padding: 13px;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s;
+            -webkit-tap-highlight-color: transparent;
+            min-height: 46px;
+        }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { background: var(--primary-hover); }
+        .btn-secondary { background: white; color: var(--text); border: 1.5px solid #ddd; }
+        .btn-secondary:hover { background: #f5f5f5; }
+        .btn-danger { background: white; color: var(--red); border: 1.5px solid var(--red); }
+        .btn-danger:hover { background: #fff5f5; }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn .badge {
+            display: inline-block;
+            background: rgba(255,255,255,0.25);
+            color: white;
+            font-size: 11px;
+            padding: 1px 6px;
+            border-radius: 8px;
+            margin-left: 4px;
+        }
+        .btn-secondary .badge { background: #f0f0f0; color: #666; }
+
+        /* 弹窗 */
+        .modal-mask {
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.55);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            padding: 20px;
+        }
+        .modal-mask.show { display: flex; }
+        .modal {
+            background: white;
+            border-radius: 16px;
+            padding: 26px 22px 20px;
+            max-width: 360px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+        }
+        .modal .emoji { font-size: 56px; line-height: 1; margin-bottom: 12px; }
+        .modal h2 { font-size: 22px; margin-bottom: 6px; }
+        .modal .msg { font-size: 14px; color: var(--text-mute); margin-bottom: 18px; }
+        .modal .modal-actions {
+            display: flex; gap: 8px;
+        }
+        .modal .modal-actions .btn { padding: 11px 14px; font-size: 14px; }
+
+        .footer {
+            text-align: center;
+            color: rgba(0,0,0,0.4);
+            font-size: 12px;
+            margin-top: 12px;
+        }
+
+        /* 模式选择 */
+        .mode-select {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .mode-card {
+            background: white;
+            border-radius: 12px;
+            padding: 18px 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            cursor: pointer;
+            transition: transform 0.15s, box-shadow 0.15s;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .mode-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+        }
+        .mode-card:active {
+            transform: translateY(0);
+        }
+        .mode-emoji { font-size: 36px; line-height: 1; }
+        .mode-title { font-size: 16px; font-weight: 600; color: var(--text); }
+        .mode-desc { font-size: 12px; color: var(--text-mute); margin-top: 2px; }
+
+        /* 加入房间表单 */
+        .join-form { margin-bottom: 16px; }
+        .join-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        }
+        .join-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            text-align: center;
+        }
+        .join-row { margin-bottom: 14px; }
+        .join-row label {
+            display: block;
+            font-size: 13px;
+            color: var(--text-mute);
+            margin-bottom: 6px;
+        }
+        .join-row input {
+            width: 100%;
+            padding: 11px 14px;
+            border: 1.5px solid #ddd;
+            border-radius: 8px;
+            font-size: 15px;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+        .join-row input:focus { border-color: var(--primary); }
+        .join-row input#joinRoomId {
+            font-size: 24px;
+            letter-spacing: 8px;
+            text-align: center;
+            font-weight: 600;
+        }
+        .join-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 18px;
+        }
+        .join-actions .btn { flex: 1; }
+
+        /* 房间信息条 */
+        .room-bar {
+            background: white;
+            border-radius: 12px;
+            padding: 12px 16px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            margin-bottom: 14px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .room-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .room-label {
+            font-size: 12px;
+            color: var(--text-mute);
+        }
+        .room-id {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--primary);
+            letter-spacing: 2px;
+        }
+        .room-role {
+            font-size: 12px;
+            background: var(--primary);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 6px;
+        }
+        .room-status {
+            flex: 1;
+            text-align: right;
+            font-size: 13px;
+            color: var(--text-mute);
+            min-height: 18px;
+        }
+        .room-status.waiting { color: var(--warn); }
+        .room-status.playing { color: var(--success); font-weight: 500; }
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 12px;
+            min-height: 30px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>♟️ 五子棋</h1>
+        <div class="sub" id="headerSub">选择模式开始游戏</div>
+    </div>
+
+    <div class="container">
+        <!-- 模式选择 (默认显示) -->
+        <div id="modeSelect" class="mode-select">
+            <div class="mode-card" data-mode="ai">
+                <div class="mode-emoji">🤖</div>
+                <div class="mode-title">人机对战</div>
+                <div class="mode-desc">挑战 AI, 三个难度</div>
+            </div>
+            <div class="mode-card" data-mode="create">
+                <div class="mode-emoji">🏠</div>
+                <div class="mode-title">开房间</div>
+                <div class="mode-desc">创建 4 位房间号, 等对手加入</div>
+            </div>
+            <div class="mode-card" data-mode="join">
+                <div class="mode-emoji">🚪</div>
+                <div class="mode-title">加入房间</div>
+                <div class="mode-desc">输入 4 位房间号加入对局</div>
+            </div>
+        </div>
+
+        <!-- 加入房间表单 (默认隐藏) -->
+        <div id="joinForm" class="join-form" style="display:none">
+            <div class="join-card">
+                <div class="join-title">加入房间</div>
+                <div class="join-row">
+                    <label>你的名字</label>
+                    <input type="text" id="joinName" placeholder="玩家" maxlength="20" value="玩家" />
+                </div>
+                <div class="join-row">
+                    <label>房间号</label>
+                    <input type="text" id="joinRoomId" placeholder="4 位数字" maxlength="4" inputmode="numeric" pattern="\d{4}" />
+                </div>
+                <div class="join-actions">
+                    <button class="btn btn-secondary" id="joinCancel">返回</button>
+                    <button class="btn btn-primary" id="joinConfirm">加入</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 房间信息条 (PvP 模式下显示) -->
+        <div id="roomBar" class="room-bar" style="display:none">
+            <div class="room-info">
+                <span class="room-label">房间</span>
+                <span class="room-id" id="roomId">----</span>
+                <span class="room-role" id="roomRole">-</span>
+            </div>
+            <div class="room-status" id="roomBarStatus">等待对手加入…</div>
+            <button class="btn btn-secondary btn-small" id="leaveRoomBtn">退出房间</button>
+        </div>
+
+        <!-- AI 选档 + 状态 (AI 模式显示) -->
+        <div class="controls" id="aiControls" style="display:none">
+            <span class="label">AI 强度:</span>
+            <button class="level-btn active" data-level="easy">🐣 萌新</button>
+            <button class="level-btn" data-level="medium">🦊 老手</button>
+            <button class="level-btn" data-level="hard">🐉 大师</button>
+            <div class="status" id="status">点击棋盘落子</div>
+        </div>
+
+        <!-- 棋盘 -->
+        <div class="board-wrap" id="boardWrap" style="display:none">
+            <div class="board interactive" id="board">
+                <div class="hover-dot" id="hoverDot"></div>
+            </div>
+        </div>
+
+        <!-- 操作 -->
+        <div class="actions" id="actionsBar" style="display:none">
+            <button class="btn btn-secondary" id="undoBtn" disabled>
+                ↩️ 悔棋 <span class="badge" id="undoBadge">3/3</span>
+            </button>
+            <button class="btn btn-secondary" id="newBtn">
+                🆕 新对局
+            </button>
+            <button class="btn btn-danger" id="resignBtn" disabled>
+                🏳️ 认输
+            </button>
+        </div>
+
+        <div class="footer">© 2024 五子棋 · 阶段 1: 单机 AI</div>
+    </div>
+
+    <!-- 弹窗 -->
+    <div class="modal-mask" id="modal">
+        <div class="modal">
+            <div class="emoji" id="modalEmoji">🎉</div>
+            <h2 id="modalTitle">胜利</h2>
+            <div class="msg" id="modalMsg">你连成五子！</div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" id="modalClose">关闭</button>
+                <button class="btn btn-primary" id="modalRestart">再来一局</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 申请/响应弹窗 (悔棋、重开、断连等都走这里) -->
+    <div class="modal-mask" id="confirmModal">
+        <div class="modal">
+            <div class="emoji" id="confirmEmoji">❓</div>
+            <h2 id="confirmTitle">确认</h2>
+            <div class="msg" id="confirmMsg">是否同意？</div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" id="confirmCancel">拒绝</button>
+                <button class="btn btn-primary" id="confirmOk">同意</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // ─────────────── 状态 ───────────────
+    const EMPTY = 0, BLACK = 1, WHITE = 2;
+    const state = {
+        gameId: null,
+        level: 'easy',
+        board: Array(15).fill(null).map(() => Array(15).fill(0)),
+        lastMove: null,
+        winner: 0,
+        winLine: null,
+        undoLeft: 3,
+        aiThinking: false,
+        gameOver: false,
+    };
+
+    // ─────────────── DOM ───────────────
+    const $board = document.getElementById('board');
+    const $hoverDot = document.getElementById('hoverDot');
+    const $status = document.getElementById('status');
+    const $undoBtn = document.getElementById('undoBtn');
+    const $undoBadge = document.getElementById('undoBadge');
+    const $resignBtn = document.getElementById('resignBtn');
+    const $newBtn = document.getElementById('newBtn');
+    const $modal = document.getElementById('modal');
+    const $modalEmoji = document.getElementById('modalEmoji');
+    const $modalTitle = document.getElementById('modalTitle');
+    const $modalMsg = document.getElementById('modalMsg');
+    const $modalClose = document.getElementById('modalClose');
+    const $modalRestart = document.getElementById('modalRestart');
+    const $levelBtns = document.querySelectorAll('.level-btn');
+
+    // ─────────────── 音频（WebAudio 合成，不依赖外部文件） ───────────────
+    let audioCtx = null;
+    function ensureAudio() {
+        if (!audioCtx) {
+            try {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            } catch (e) { return null; }
+        }
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        return audioCtx;
+    }
+    function playTone(freq, dur, type='sine', vol=0.15) {
+        const ctx = ensureAudio();
+        if (!ctx) return;
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = type;
+        o.frequency.value = freq;
+        g.gain.setValueAtTime(vol, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+        o.connect(g);
+        g.connect(ctx.destination);
+        o.start();
+        o.stop(ctx.currentTime + dur);
+    }
+    function sfxStone(isBlack) {
+        // 落子音：黑子低沉、白子清脆
+        playTone(isBlack ? 280 : 520, 0.08, 'triangle', 0.12);
+    }
+    function sfxWin() {
+        // 上行音阶
+        setTimeout(() => playTone(523, 0.15, 'sine', 0.18), 0);
+        setTimeout(() => playTone(659, 0.15, 'sine', 0.18), 120);
+        setTimeout(() => playTone(784, 0.25, 'sine', 0.2), 240);
+    }
+    function sfxLose() {
+        // 下行音阶
+        setTimeout(() => playTone(440, 0.18, 'sine', 0.18), 0);
+        setTimeout(() => playTone(330, 0.18, 'sine', 0.18), 150);
+        setTimeout(() => playTone(220, 0.3, 'sine', 0.2), 300);
+    }
+    function sfxClick() {
+        playTone(800, 0.04, 'square', 0.06);
+    }
+
+    // ─────────────── 棋盘渲染 ───────────────
+    function cellToPixel(x, y) {
+        const cellSize = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--cell-size')) ||
+                        parseFloat(getComputedStyle($board).getPropertyValue('--cell-size'));
+        // 实际 cell-size 在 .board 上，需要用 computed
+        const cs = parseFloat(getComputedStyle($board).getPropertyValue('--cell-size'));
+        const pad = 16;
+        return {
+            left: pad + x * cs,
+            top: pad + y * cs,
+        };
+    }
+
+    function renderBoard() {
+        // 清理旧棋子（保留 hoverDot）
+        [...$board.querySelectorAll('.piece')].forEach(n => n.remove());
+
+        for (let y = 0; y < 15; y++) {
+            for (let x = 0; x < 15; x++) {
+                const c = state.board[y][x];
+                if (c === EMPTY) continue;
+                const {left, top} = cellToPixel(x, y);
+                const p = document.createElement('div');
+                p.className = 'piece ' + (c === BLACK ? 'black' : 'white');
+                p.style.left = left + 'px';
+                p.style.top = top + 'px';
+                if (state.lastMove && state.lastMove[0] === x && state.lastMove[1] === y) {
+                    p.classList.add('last');
+                }
+                if (state.winLine && state.winLine.some(([wx, wy]) => wx === x && wy === y)) {
+                    p.classList.add('win');
+                }
+                $board.appendChild(p);
+            }
+        }
+    }
+
+    function pixelToCell(clientX, clientY) {
+        const rect = $board.getBoundingClientRect();
+        const cs = parseFloat(getComputedStyle($board).getPropertyValue('--cell-size'));
+        const pad = 16;
+        const localX = clientX - rect.left - pad;
+        const localY = clientY - rect.top - pad;
+        // 吸附到最近的格点
+        const x = Math.round(localX / cs);
+        const y = Math.round(localY / cs);
+        if (x < 0 || x >= 15 || y < 0 || y >= 15) return null;
+        return [x, y];
+    }
+
+    // ─────────────── 状态显示 ───────────────
+    function setStatus(text, cls) {
+        $status.textContent = text;
+        $status.className = 'status' + (cls ? ' ' + cls : '');
+    }
+
+    function refreshButtons() {
+        $undoBtn.disabled = state.gameOver || state.undoLeft <= 0 || state.aiThinking;
+        $undoBadge.textContent = `${state.undoLeft}/3`;
+        $resignBtn.disabled = state.gameOver || state.aiThinking;
+        $board.classList.toggle('interactive', !state.gameOver && !state.aiThinking);
+    }
+
+    function showModal(emoji, title, msg) {
+        $modalEmoji.textContent = emoji;
+        $modalTitle.textContent = title;
+        $modalMsg.textContent = msg;
+        $modal.classList.add('show');
+    }
+    function hideModal() {
+        $modal.classList.remove('show');
+    }
+
+    // ─────────────── 通用确认弹窗 (替代 confirm(), 更可靠) ───────────────
+    // showConfirm({emoji, title, msg, okText, cancelText}) -> Promise<boolean>
+    const $confirmModal = document.getElementById('confirmModal');
+    const $confirmEmoji = document.getElementById('confirmEmoji');
+    const $confirmTitle = document.getElementById('confirmTitle');
+    const $confirmMsg = document.getElementById('confirmMsg');
+    const $confirmOk = document.getElementById('confirmOk');
+    const $confirmCancel = document.getElementById('confirmCancel');
+    let _confirmResolver = null;
+    function showConfirm({emoji='❓', title='确认', msg='是否同意？', okText='同意', cancelText='拒绝'}) {
+        return new Promise((resolve) => {
+            $confirmEmoji.textContent = emoji;
+            $confirmTitle.textContent = title;
+            $confirmMsg.textContent = msg;
+            $confirmOk.textContent = okText;
+            $confirmCancel.textContent = cancelText;
+            $confirmModal.classList.add('show');
+            _confirmResolver = resolve;
+        });
+    }
+    function _resolveConfirm(v) {
+        $confirmModal.classList.remove('show');
+        if (_confirmResolver) {
+            const r = _confirmResolver;
+            _confirmResolver = null;
+            r(v);
+        }
+    }
+    $confirmOk.addEventListener('click', () => _resolveConfirm(true));
+    $confirmCancel.addEventListener('click', () => _resolveConfirm(false));
+
+    // ─────────────── API ───────────────
+    // API 路径前缀: 因为页面在 /gomoku/ 下, 但 Caddy 只对 /gomoku* 做反代
+    // 浏览器里的 fetch 必须显式带 /gomoku 前缀才能命中 3100 端口
+    // 否则会落到 8080 刷题神器, 返回 405
+    const API = '/gomoku/api';
+
+    async function apiNewGame(level) {
+        const r = await fetch(`${API}/new_game`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({level}),
+        });
+        if (!r.ok) {
+            const t = await r.text();
+            throw new Error('new_game ' + r.status + ': ' + t);
+        }
+        return r.json();
+    }
+    async function apiMove(gameId, x, y) {
+        const r = await fetch(`${API}/move`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({game_id: gameId, x, y}),
+        });
+        if (!r.ok) {
+            const t = await r.text();
+            throw new Error('move ' + r.status + ': ' + t);
+        }
+        return r.json();
+    }
+    async function apiUndo(gameId) {
+        const r = await fetch(`${API}/undo`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({game_id: gameId, x: 0, y: 0}),
+        });
+        if (!r.ok) {
+            const t = await r.text();
+            throw new Error('undo ' + r.status + ': ' + t);
+        }
+        return r.json();
+    }
+    async function apiResign(gameId) {
+        const r = await fetch(`${API}/resign`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({game_id: gameId, x: 0, y: 0}),
+        });
+        if (!r.ok) {
+            const t = await r.text();
+            throw new Error('resign ' + r.status + ': ' + t);
+        }
+        return r.json();
+    }
+    async function apiRestart(level) {
+        return apiNewGame(level);
+    }
+
+    // ─────────────── 流程 ───────────────
+    async function newGame() {
+        // 防止重复点击
+        if (state.aiThinking) return;
+        sfxClick();
+        state.aiThinking = true;
+        $newBtn.disabled = true;
+        setStatus('开新局中…', 'thinking');
+        try {
+            const data = await apiNewGame(state.level);
+            state.gameId = data.game_id;
+            state.board = data.board;
+            state.lastMove = null;
+            state.winner = 0;
+            state.winLine = null;
+            state.undoLeft = data.undo_left;
+            state.gameOver = false;
+            state.aiThinking = false;
+            renderBoard();
+            setStatus('点击棋盘落子（你执黑）');
+        } catch (e) {
+            state.aiThinking = false;
+            setStatus('开新局失败: ' + e.message, 'lose');
+            showModal('⚠️', '开新局失败', e.message + '\n请检查后端服务是否在跑');
+        } finally {
+            $newBtn.disabled = false;
+            refreshButtons();
+        }
+    }
+
+    async function playerMove(x, y) {
+        if (state.gameOver || state.aiThinking) return;
+        if (state.board[y][x] !== EMPTY) {
+            setStatus('该位置已有棋子');
+            return;
+        }
+
+        state.aiThinking = true;
+        refreshButtons();
+        setStatus('AI 思考中…', 'thinking');
+
+        try {
+            const r = await apiMove(state.gameId, x, y);
+            // 玩家落子音
+            sfxStone(true);
+            state.board = r.board;
+            state.lastMove = [r.player_x, r.player_y];
+            state.undoLeft = r.undo_left;
+
+            // 玩家五连胜
+            if (r.winner === BLACK) {
+                state.winner = BLACK;
+                state.winLine = r.win_line;
+                state.gameOver = true;
+                state.aiThinking = false;
+                renderBoard();
+                sfxWin();
+                setStatus('🎉 你赢了！', 'win');
+                refreshButtons();
+                setTimeout(() => showModal('🎉', '你赢了！', `已战胜 ${levelName(state.level)}`), 600);
+                return;
+            }
+            if (r.winner === 3) {
+                state.winner = 3;
+                state.gameOver = true;
+                state.aiThinking = false;
+                renderBoard();
+                setStatus('🤝 平局', 'draw');
+                refreshButtons();
+                setTimeout(() => showModal('🤝', '平局', '棋盘下满无人五连'), 600);
+                return;
+            }
+
+            // AI 落子音
+            renderBoard();
+            await sleep(150);
+            sfxStone(false);
+            state.lastMove = [r.ai_x, r.ai_y];
+
+            if (r.winner === WHITE) {
+                state.winner = WHITE;
+                state.winLine = r.win_line;
+                state.gameOver = true;
+                state.aiThinking = false;
+                renderBoard();
+                sfxLose();
+                const msg = `用时 ${r.ai_thinking_ms}ms · 悔棋 ${state.undoLeft}/3`;
+                setStatus('💀 AI 赢了', 'lose');
+                refreshButtons();
+                setTimeout(() => showModal('💀', 'AI 获胜', msg), 600);
+                return;
+            }
+            if (r.winner === 3) {
+                state.winner = 3;
+                state.gameOver = true;
+                state.aiThinking = false;
+                renderBoard();
+                setStatus('🤝 平局', 'draw');
+                refreshButtons();
+                setTimeout(() => showModal('🤝', '平局', '棋盘下满无人五连'), 600);
+                return;
+            }
+
+            state.aiThinking = false;
+            setStatus(`AI 用时 ${r.ai_thinking_ms}ms · 轮到你了`);
+            refreshButtons();
+            renderBoard();
+        } catch (e) {
+            state.aiThinking = false;
+            setStatus('落子失败: ' + e.message);
+            refreshButtons();
+        }
+    }
+
+    async function undo() {
+        if (state.gameOver || state.aiThinking) return;
+        if (state.undoLeft <= 0) return;
+        sfxClick();
+        try {
+            const r = await apiUndo(state.gameId);
+            state.board = r.board;
+            state.lastMove = r.last_move;
+            state.undoLeft = r.undo_left;
+            state.winner = 0;
+            state.winLine = null;
+            renderBoard();
+            setStatus('悔棋成功，轮到你了');
+            refreshButtons();
+        } catch (e) {
+            setStatus('悔棋失败: ' + e.message);
+        }
+    }
+
+    async function resign() {
+        if (state.gameOver) {
+            // 已结束：弹窗里"再来一局"已处理，这里只是兜底
+            return;
+        }
+        const ok = await showConfirm({
+            emoji: '🏳️',
+            title: '认输',
+            msg: '确定认输？\n这局将判你负。',
+            okText: '认输',
+            cancelText: '再想想'
+        });
+        if (!ok) return;
+        sfxLose();
+        try {
+            const r = await apiResign(state.gameId);
+            state.winner = r.winner;
+            state.gameOver = true;
+            renderBoard();
+            setStatus('🏳️ 你已认输', 'lose');
+            refreshButtons();
+            showModal('🏳️', '你已认输', '不退出房间，可点击"再来一局"开新对局');
+        } catch (e) {
+            setStatus('认输失败: ' + e.message);
+        }
+    }
+
+    function levelName(lv) {
+        return {easy: '萌新🐣', medium: '老手🦊', hard: '大师🐉'}[lv] || lv;
+    }
+
+    function sleep(ms) {
+        return new Promise(r => setTimeout(r, ms));
+    }
+
+    // ─────────────── 事件 ───────────────
+    $board.addEventListener('click', async (e) => {
+        ensureAudio(); // 首次点击解锁音频
+        if (state.gameOver || state.aiThinking) return;
+        const cell = pixelToCell(e.clientX, e.clientY);
+        if (!cell) return;
+        await playerMove(cell[0], cell[1]);
+    });
+
+    $board.addEventListener('mousemove', (e) => {
+        if (state.gameOver || state.aiThinking) {
+            $hoverDot.style.display = 'none';
+            return;
+        }
+        const cell = pixelToCell(e.clientX, e.clientY);
+        if (!cell) { $hoverDot.style.display = 'none'; return; }
+        const {left, top} = cellToPixel(cell[0], cell[1]);
+        $hoverDot.style.left = left + 'px';
+        $hoverDot.style.top = top + 'px';
+        $hoverDot.style.display = 'block';
+    });
+    $board.addEventListener('mouseleave', () => {
+        $hoverDot.style.display = 'none';
+    });
+
+    $levelBtns.forEach(btn => {
+        btn.addEventListener('click', async () => {
+            if (state.aiThinking) return;
+            const lv = btn.dataset.level;
+            if (lv === state.level) return;
+            $levelBtns.forEach(b => b.classList.toggle('active', b === btn));
+            state.level = lv;
+            await newGame();
+        });
+    });
+
+    $undoBtn.addEventListener('click', undo);
+    $newBtn.addEventListener('click', async () => {
+        if (pvp.roomId) {
+            if (!state.gameOver) {
+                await showConfirm({
+                    emoji: '⚠️',
+                    title: '对局进行中',
+                    msg: '对局进行中，请用"认输"结束。',
+                    okText: '知道了',
+                    cancelText: '关闭'
+                });
+                return;
+            }
+            const ok = await showConfirm({
+                emoji: '🔄',
+                title: '发起重开请求',
+                msg: '需对方同意才可重开。\n确定发起？',
+                okText: '发起',
+                cancelText: '取消'
+            });
+            if (!ok) return;
+            sfxClick();
+            socket.emit('restart_request');
+            setStatus('已发起重开请求…', 'thinking');
+            return;
+        }
+        await newGame();
+    });
+    $resignBtn.addEventListener('click', resign);
+    $modalClose.addEventListener('click', hideModal);
+    $modalRestart.addEventListener('click', async () => {
+        hideModal();
+        if (pvp.roomId) {
+            // PvP 模式: 弹窗里的"再来一局"等价于发起重开请求
+            if (!state.gameOver) return;
+            sfxClick();
+            socket.emit('restart_request');
+            setStatus('已发起重开请求…', 'thinking');
+            return;
+        }
+        await newGame();
+    });
+
+    // ══════════════════════════════════════════════
+    //  PvP 模式（开房间 / 加入房间）
+    // ══════════════════════════════════════════════
+    const BLACK_NAME = '黑', WHITE_NAME = '白';
+    const $modeSelect = document.getElementById('modeSelect');
+    const $joinForm = document.getElementById('joinForm');
+    const $joinName = document.getElementById('joinName');
+    const $joinRoomId = document.getElementById('joinRoomId');
+    const $joinCancel = document.getElementById('joinCancel');
+    const $joinConfirm = document.getElementById('joinConfirm');
+    const $roomBar = document.getElementById('roomBar');
+    const $roomId = document.getElementById('roomId');
+    const $roomRole = document.getElementById('roomRole');
+    const $roomBarStatus = document.getElementById('roomBarStatus');
+    const $leaveRoomBtn = document.getElementById('leaveRoomBtn');
+    const $aiControls = document.getElementById('aiControls');
+    const $headerSub = document.getElementById('headerSub');
+    const $resignBtn2 = $resignBtn; // 复用
+    const $boardWrap = document.getElementById('boardWrap');
+    const $actionsBar = document.getElementById('actionsBar');
+
+    // Socket.IO 连接
+    // 跟 uno 对齐: 用 path 选项显式指定端点, 避免 fallback 阶段 WebSocket URL 丢掉 /gomoku 前缀
+    // Caddy handle_path /gomoku* 会把 /gomoku/socket.io/... strip 成 /socket.io/... 转发到 :3100
+    const socket = io({
+        path: '/gomoku/socket.io',
+        transports: ['websocket', 'polling'],
+        reconnection: true,
+    });
+
+    const pvp = {
+        mode: null,           // 'create' | 'join' | 'playing'
+        roomId: null,
+        myColor: 0,           // 1=黑 2=白
+        opponentName: '',
+        pendingUndo: false,   // 我是否发了悔棋申请在等对方
+        pendingRestart: false,
+    };
+
+    function showModeSelect() {
+        $modeSelect.style.display = '';
+        $joinForm.style.display = 'none';
+        $roomBar.style.display = 'none';
+        $aiControls.style.display = 'none';
+        $boardWrap.style.display = 'none';
+        $actionsBar.style.display = 'none';
+        $headerSub.textContent = '选择模式开始游戏';
+        // 断开 socket 避免占着
+        if (socket.connected) socket.disconnect();
+    }
+
+    function showAIGame() {
+        $modeSelect.style.display = 'none';
+        $joinForm.style.display = 'none';
+        $roomBar.style.display = 'none';
+        $aiControls.style.display = '';
+        $boardWrap.style.display = '';
+        $actionsBar.style.display = '';
+        $headerSub.textContent = '你执黑 · AI 执白 · 无禁手';
+        if (!socket.connected) socket.connect();
+    }
+
+    function showJoinForm() {
+        $modeSelect.style.display = 'none';
+        $joinForm.style.display = '';
+        $roomBar.style.display = 'none';
+        $aiControls.style.display = 'none';
+        $boardWrap.style.display = 'none';
+        $actionsBar.style.display = 'none';
+        $headerSub.textContent = '加入对局';
+        setStatus('输入 4 位房间号加入', '');
+        $joinRoomId.value = '';
+        $joinName.value = localStorage.getItem('gomoku_name') || '玩家';
+        setTimeout(() => $joinRoomId.focus(), 100);
+    }
+
+    function showPvPGame() {
+        $modeSelect.style.display = 'none';
+        $joinForm.style.display = 'none';
+        $roomBar.style.display = '';
+        $aiControls.style.display = 'none';
+        $boardWrap.style.display = '';
+        $actionsBar.style.display = '';
+        $roomId.textContent = pvp.roomId;
+        $roomRole.textContent = pvp.myColor === BLACK ? '执黑' : '执白';
+        $roomRole.style.background = pvp.myColor === BLACK ? 'var(--black)' : 'var(--text-mute)';
+    }
+
+    // 模式选择点击
+    document.querySelectorAll('.mode-card').forEach(card => {
+        card.addEventListener('click', () => {
+            sfxClick();
+            const m = card.dataset.mode;
+            if (m === 'ai') {
+                pvp.mode = null;
+                showAIGame();
+                newGame();
+            } else if (m === 'create') {
+                pvp.mode = 'create';
+                showPvPGame();
+                startCreateRoom();
+            } else if (m === 'join') {
+                showJoinForm();
+            }
+        });
+    });
+
+    // 房间号输入限制: 4 位数字
+    $joinRoomId.addEventListener('input', (e) => {
+        e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4);
+    });
+
+    $joinCancel.addEventListener('click', showModeSelect);
+
+    $joinConfirm.addEventListener('click', async () => {
+        const name = ($joinName.value || '玩家').slice(0, 20);
+        const rid = $joinRoomId.value.trim();
+        if (!/^\d{4}$/.test(rid)) {
+            await showConfirm({
+                emoji: '⚠️',
+                title: '房间号错误',
+                msg: '房间号必须是 4 位数字',
+                okText: '知道了',
+                cancelText: '关闭'
+            });
+            $joinRoomId.focus();
+            return;
+        }
+        localStorage.setItem('gomoku_name', name);
+        showPvPGame();
+        startJoinRoom(rid, name);
+    });
+
+    $joinRoomId.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') $joinConfirm.click();
+    });
+
+    $leaveRoomBtn.addEventListener('click', async () => {
+        const ok = await showConfirm({
+            emoji: '🚪',
+            title: '退出房间',
+            msg: '确定退出当前房间？\n对方将被通知你已离开。',
+            okText: '退出',
+            cancelText: '取消'
+        });
+        if (!ok) return;
+        socket.disconnect();
+        pvp.mode = null;
+        pvp.roomId = null;
+        pvp.myColor = 0;
+        pvp.opponentName = '';
+        pvp.pendingUndo = false;
+        pvp.pendingRestart = false;
+        showModeSelect();
+        // 1 秒后重连以备下次
+        setTimeout(() => socket.connect(), 1000);
+    });
+
+    // 创建房间
+    function startCreateRoom() {
+        const name = localStorage.getItem('gomoku_name') || '房主';
+        if (!socket.connected) socket.connect();
+        socket.emit('create_room', { name });
+        setStatus('正在创建房间…', 'thinking');
+        $roomBarStatus.textContent = '正在创建房间…';
+        $roomBarStatus.className = 'room-status waiting';
+    }
+
+    // 加入房间
+    function startJoinRoom(rid, name) {
+        pvp.mode = 'join';
+        if (!socket.connected) socket.connect();
+        socket.emit('join_room', { room_id: rid, name });
+        setStatus('正在加入房间 ' + rid + '…', 'thinking');
+        $roomBarStatus.textContent = '正在加入房间 ' + rid + '…';
+        $roomBarStatus.className = 'room-status waiting';
+    }
+
+    // PvP 落子
+    async function pvpMove(x, y) {
+        if (state.gameOver) return;
+        if (state.board[y][x] !== EMPTY) {
+            setStatus('该位置已有棋子');
+            return;
+        }
+        socket.emit('move', { x, y });
+    }
+
+    // 替换棋盘 click 处理：AI 模式走原 playerMove, PvP 走 pvpMove
+    $board.addEventListener('click', async (e) => {
+        ensureAudio();
+        if (!pvp.roomId) {
+            // AI 模式
+            if (state.gameOver || state.aiThinking) return;
+            const cell = pixelToCell(e.clientX, e.clientY);
+            if (!cell) return;
+            await playerMove(cell[0], cell[1]);
+        } else {
+            // PvP 模式
+            if (state.gameOver) return;
+            if (state.board.some(row => row.some(c => c !== 0)) &&
+                state.lastMove) {
+                // 检查是否轮到我
+                if (state.currentTurn !== pvp.myColor) {
+                    setStatus('还没轮到你');
+                    return;
+                }
+            }
+            const cell = pixelToCell(e.clientX, e.clientY);
+            if (!cell) return;
+            sfxStone(pvp.myColor === BLACK);
+            pvpMove(cell[0], cell[1]);
+        }
+    });
+
+    // PvP 模式: 悔棋按钮改造
+    $undoBtn.addEventListener('click', async () => {
+        if (pvp.roomId) {
+            const ok = await showConfirm({
+                emoji: '↩️',
+                title: '发起悔棋请求',
+                msg: '悔棋需要对方同意。\n确定发起请求？',
+                okText: '发起',
+                cancelText: '取消'
+            });
+            if (!ok) return;
+            sfxClick();
+            socket.emit('undo_request');
+            $undoBtn.disabled = true;
+            pvp.pendingUndo = true;
+            setStatus('已发起悔棋请求，等待对方同意…', 'thinking');
+        } else {
+            undo();
+        }
+    });
+
+    // PvP 模式: 认输按钮
+    $resignBtn.addEventListener('click', async () => {
+        if (pvp.roomId) {
+            const ok = await showConfirm({
+                emoji: '🏳️',
+                title: '认输',
+                msg: '确定认输？\n这局将判你负。',
+                okText: '认输',
+                cancelText: '再想想'
+            });
+            if (!ok) return;
+            socket.emit('resign');
+        } else {
+            await resign();
+        }
+    });
+
+    // 新对局按钮的 PvP 分支已合并到上方统一 handler (避免重复绑定)
+
+    // ══════════════════════════════════════════════
+    //  Socket.IO 事件处理
+    // ══════════════════════════════════════════════
+    socket.on('connect', () => {
+        console.log('[socket] connected, sid=', socket.id);
+    });
+
+    socket.on('disconnect', (reason) => {
+        console.log('[socket] disconnected:', reason);
+        // 本地断线: 在 PvP 模式下提示, 方便用户判断是否要刷新
+        if (pvp.roomId) {
+            setStatus('⚠️ 与服务器断开连接: ' + reason, 'lose');
+        }
+    });
+
+    // 重连成功: 通知用户 (PvP 模式下, 房间可能已被清理, 让用户返回选模式)
+    socket.on('reconnect', (attempt) => {
+        console.log('[socket] reconnected after', attempt, 'attempts');
+        if (pvp.roomId) {
+            setStatus('✅ 已重新连接服务器', '');
+        }
+    });
+
+    socket.on('error', (data) => {
+        const msg = (data && data.msg) || '未知错误';
+        showConfirm({
+            emoji: '❌',
+            title: '错误',
+            msg: msg,
+            okText: '知道了',
+            cancelText: '关闭'
+        });
+        setStatus('❌ ' + msg, 'lose');
+    });
+
+    socket.on('room_created', (data) => {
+        pvp.mode = 'create';
+        pvp.roomId = data.room_id;
+        pvp.myColor = data.color; // 房主执黑
+        pvp.opponentName = '';
+        $roomId.textContent = data.room_id;
+        $roomRole.textContent = '执黑 (房主)';
+        $roomRole.style.background = 'var(--black)';
+        $roomBarStatus.textContent = '等待对手加入（5 分钟内有效）…';
+        $roomBarStatus.className = 'room-status waiting';
+        // 重置棋盘
+        state.board = Array(15).fill(null).map(() => Array(15).fill(0));
+        state.lastMove = null;
+        state.winner = 0;
+        state.winLine = null;
+        state.undoLeft = 3;
+        state.gameOver = false;
+        state.currentTurn = BLACK;
+        renderBoard();
+        setStatus('房间 ' + data.room_id + ' 已创建，等对手加入', '');
+        $undoBadge.textContent = '3/3';
+        refreshButtons();
+    });
+
+    socket.on('room_joined', (data) => {
+        pvp.mode = 'playing';
+        pvp.roomId = data.room_id;
+        pvp.myColor = data.color; // 加入者执白
+        pvp.opponentName = data.host_name || '房主';
+        state.board = data.board;
+        state.lastMove = null;
+        state.winner = 0;
+        state.winLine = null;
+        state.undoLeft = 3;
+        state.gameOver = false;
+        state.currentTurn = data.current_turn || BLACK;
+        $roomId.textContent = data.room_id;
+        $roomRole.textContent = '执白 (加入)';
+        $roomRole.style.background = 'var(--text-mute)';
+        $roomBarStatus.textContent = '对手: ' + pvp.opponentName;
+        $roomBarStatus.className = 'room-status playing';
+        $undoBadge.textContent = '3/3';
+        renderBoard();
+        setStatus('已加入房间 ' + data.room_id + '，对手 ' + pvp.opponentName, '');
+        refreshButtons();
+    });
+
+    socket.on('opponent_joined', (data) => {
+        pvp.opponentName = data.name || '对手';
+        pvp.mode = 'playing';
+        $roomBarStatus.textContent = '对手已加入: ' + pvp.opponentName;
+        $roomBarStatus.className = 'room-status playing';
+        setStatus('🎮 对手 ' + pvp.opponentName + ' 已加入！你执黑先手', '');
+    });
+
+    socket.on('move_done', (data) => {
+        state.board = data.board;
+        state.lastMove = data.last_move;
+        state.winner = data.winner;
+        state.winLine = data.win_line;
+        state.currentTurn = data.current_turn;
+        // 落子音: 我方用 myColor 判断，对方用对面颜色
+        const lastColor = (data.last_move && state.board[data.last_move[1]][data.last_move[0]]) || 0;
+        if (lastColor === pvp.myColor) {
+            sfxStone(pvp.myColor === BLACK);
+        } else {
+            sfxStone(pvp.myColor !== BLACK); // 对方的声音
+        }
+        renderBoard();
+        $undoBadge.textContent = `${state.undoLeft || 3}/3`;
+        refreshButtons();
+
+        if (data.winner === pvp.myColor) {
+            state.gameOver = true;
+            sfxWin();
+            setStatus('🎉 你赢了！', 'win');
+            setTimeout(() => showModal('🎉', '你赢了！', '再来一局？'), 600);
+        } else if (data.winner && data.winner !== 3) {
+            state.gameOver = true;
+            sfxLose();
+            setStatus('💀 对手赢了', 'lose');
+            setTimeout(() => showModal('💀', '对手获胜', '点击"再来一局"发起重开'), 600);
+        } else if (data.winner === 3) {
+            state.gameOver = true;
+            setStatus('🤝 平局', 'draw');
+            setTimeout(() => showModal('🤝', '平局', '棋盘下满'), 600);
+        } else {
+            if (state.currentTurn === pvp.myColor) {
+                setStatus('🎯 轮到你落子', '');
+            } else {
+                setStatus('⏳ 等待对手 ' + pvp.opponentName + ' 落子…', 'thinking');
+            }
+        }
+    });
+
+    socket.on('move_error', (data) => {
+        setStatus('❌ ' + ((data && data.msg) || '落子失败'), 'lose');
+    });
+
+    socket.on('undo_requested', async (data) => {
+        const fromName = (data && data.from_color === BLACK) ? BLACK_NAME : WHITE_NAME;
+        const ok = await showConfirm({
+            emoji: '↩️',
+            title: '对手请求悔棋',
+            msg: '对手（' + fromName + '方）请求悔棋。\n是否同意？',
+            okText: '同意',
+            cancelText: '拒绝'
+        });
+        socket.emit('undo_response', { agree: ok });
+    });
+
+    socket.on('undo_done', (data) => {
+        state.board = data.board;
+        state.lastMove = data.last_move;
+        state.currentTurn = data.current_turn;
+        state.undoLeft = data.undo_left ? data.undo_left[pvp.myColor] : state.undoLeft;
+        state.winner = 0;
+        state.gameOver = false;
+        pvp.pendingUndo = false;
+        $undoBadge.textContent = `${state.undoLeft}/3`;
+        renderBoard();
+        refreshButtons();
+        setStatus('✅ 悔棋成功，轮到 ' + (state.currentTurn === pvp.myColor ? '你' : '对手') + ' 落子', '');
+    });
+
+    socket.on('undo_rejected', () => {
+        pvp.pendingUndo = false;
+        refreshButtons();
+        setStatus('❌ 对手拒绝了悔棋请求', 'lose');
+    });
+
+    socket.on('undo_error', (data) => {
+        pvp.pendingUndo = false;
+        refreshButtons();
+        showConfirm({
+            emoji: '⚠️',
+            title: '悔棋失败',
+            msg: (data && data.msg) || '未知错误',
+            okText: '知道了',
+            cancelText: '关闭'
+        }).then(() => {});
+    });
+
+    socket.on('restart_requested', async (data) => {
+        const fromName = (data && data.from_color === BLACK) ? BLACK_NAME : WHITE_NAME;
+        const ok = await showConfirm({
+            emoji: '🔄',
+            title: '对手请求重开',
+            msg: '对手（' + fromName + '方）请求重开。\n是否同意？',
+            okText: '同意',
+            cancelText: '拒绝'
+        });
+        socket.emit('restart_response', { agree: ok });
+    });
+
+    socket.on('restart_done', (data) => {
+        state.board = data.board;
+        state.lastMove = null;
+        state.winner = 0;
+        state.winLine = null;
+        state.currentTurn = data.current_turn;
+        state.undoLeft = data.undo_left ? data.undo_left[pvp.myColor] : 3;
+        state.gameOver = false;
+        $undoBadge.textContent = `${state.undoLeft}/3`;
+        renderBoard();
+        refreshButtons();
+        setStatus('🔄 重开！轮到你落子', '');
+        hideModal();
+    });
+
+    socket.on('restart_rejected', () => {
+        setStatus('❌ 对手拒绝了重开请求', 'lose');
+    });
+
+    socket.on('game_over', (data) => {
+        state.gameOver = true;
+        if (data.winner === pvp.myColor) {
+            sfxWin();
+            setStatus('🎉 对手认输，你赢了！', 'win');
+            setTimeout(() => showModal('🎉', '你赢了！', '对手认输'), 600);
+        } else {
+            sfxLose();
+            setStatus('💀 你已认输', 'lose');
+            setTimeout(() => showModal('🏳️', '你已认输', '不退出房间，可点击"再来一局"开新对局'), 600);
+        }
+        refreshButtons();
+    });
+
+    socket.on('opponent_disconnected', (data) => {
+        // 只提示断连, 不接管为 AI. 让玩家自己选择重开或结束
+        state.gameOver = true;
+        refreshButtons();
+        const who = (data && data.reason === 'host') ? '房主' : '对手';
+        setStatus('⚠️ ' + who + '已断开连接', 'lose');
+        showModal(
+            '⚠️',
+            who + '已断开连接',
+            '本局无法继续。\n点击"再来一局"开新对局，或"关闭"退出房间。'
+        );
+    });
+
+    socket.on('room_closed', async (data) => {
+        const reason = (data && data.reason) || '超时';
+        await showConfirm({
+            emoji: '🚪',
+            title: '房间已关闭',
+            msg: '原因: ' + reason + '\n返回选模式',
+            okText: '知道了',
+            cancelText: '关闭'
+        });
+        pvp.mode = null;
+        pvp.roomId = null;
+        pvp.myColor = 0;
+        pvp.opponentName = '';
+        pvp.pendingUndo = false;
+        pvp.pendingRestart = false;
+        showModeSelect();
+    });
+
+    // ─────────────── 启动 ───────────────
+    // 不再自动 newGame()，等用户选模式
+    // 默认 modeSelect 可见, 棋盘隐藏
+    showModeSelect();
+    </script>
+</body>
+</html>
